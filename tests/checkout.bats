@@ -558,6 +558,33 @@ setup() {
   unstub git
 }
 
+@test "Caps fetch_attempts at 10" {
+  export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_FETCH_ATTEMPTS="15"
+
+  local fetches=() sleeps=()
+  for _ in {1..10}; do
+    fetches+=("fetch --depth 1 origin dummy-commit-hash : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128")
+  done
+  for _ in {1..9}; do
+    sleeps+=("* : true")
+  done
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub sleep "${sleeps[@]}"
+  stub git "clean * : echo 'git clean'" "${fetches[@]}"
+
+  run "$PWD"/hooks/checkout
+
+  assert_failure 128
+  assert_output --partial 'Capping 15 attempts at the maximum of 10'
+  assert_output --partial 'Attempt 9/10 failed with status 128; retrying in 256.'
+  assert_output --partial 'Failed to fetch dummy-commit-hash from origin'
+
+  unstub sleep
+  unstub ssh-keyscan
+  unstub git
+}
+
 @test "Clean checkout handles repository without HEAD gracefully" {
   export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_CLEAN_CHECKOUT="true"
 

@@ -22,9 +22,11 @@ configuration:
     merge_ref_retry_attempts:
       type: integer
       default: 3
+      maximum: 10
     fetch_attempts:
       type: integer
       default: 1
+      maximum: 10
     verbose:
       type: boolean
       default: false
