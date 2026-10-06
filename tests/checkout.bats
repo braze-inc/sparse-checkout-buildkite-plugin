@@ -585,6 +585,28 @@ setup() {
   unstub git
 }
 
+@test "Rejects fetch_attempts that is not a whole number of at least 1" {
+  for value in six 6s 1.5 0 -1 08; do
+    export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_FETCH_ATTEMPTS="${value}"
+
+    run "$PWD"/hooks/checkout
+
+    assert_failure 1
+    assert_output --partial "fetch_attempts must be a whole number of at least 1, got '${value}'"
+  done
+}
+
+@test "Rejects merge_ref_retry_attempts that is not a whole number of at least 0" {
+  for value in three 3s 1.5 -1 08; do
+    export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_MERGE_REF_RETRY_ATTEMPTS="${value}"
+
+    run "$PWD"/hooks/checkout
+
+    assert_failure 1
+    assert_output --partial "merge_ref_retry_attempts must be a whole number of at least 0, got '${value}'"
+  done
+}
+
 @test "Clean checkout handles repository without HEAD gracefully" {
   export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_CLEAN_CHECKOUT="true"
 

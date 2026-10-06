@@ -33,7 +33,16 @@ CLEAN_CHECKOUT_OPTION="$(plugin_read_config CLEAN_CHECKOUT "false")"
 MERGE_REF_RETRY_ATTEMPTS="$(plugin_read_config MERGE_REF_RETRY_ATTEMPTS "3")"
 # Opt-in retry for the clone and commit fetch (see retry_with_backoff)
 FETCH_ATTEMPTS="$(plugin_read_config FETCH_ATTEMPTS "1")"
-(( FETCH_ATTEMPTS > 0 )) || FETCH_ATTEMPTS=1
+
+# Usage: validate_attempts fetch_attempts "${FETCH_ATTEMPTS}" 1
+validate_attempts() {
+  if [[ ! "$2" =~ ^(0|[1-9][0-9]*)$ ]] || (( $2 < $3 )); then
+    log_error "$1 must be a whole number of at least $3, got '$2'"
+    exit 1
+  fi
+}
+validate_attempts merge_ref_retry_attempts "${MERGE_REF_RETRY_ATTEMPTS}" 0
+validate_attempts fetch_attempts "${FETCH_ATTEMPTS}" 1
 
 if [[ "${CLEAN_CHECKOUT_OPTION}" = "true" ]]; then
   log_warning "clean_checkout is enabled - this will destroy any local changes and reset the repository state"
