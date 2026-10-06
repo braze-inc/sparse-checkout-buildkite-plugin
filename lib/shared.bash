@@ -124,6 +124,29 @@ retry() {
   done
 }
 
+# Retry a command with the agent's checkout backoff (buildkite/agent#3822):
+# 1s, 2s, 4s, ... plus up to 1s of jitter between attempts
+# Usage: retry_with_backoff 6 git fetch origin main
+# Arguments:
+#   $1: total number of attempts
+#   $@: command to execute
+retry_with_backoff() {
+  local attempts=$1
+  shift
+  local attempt status delay
+
+  for ((attempt = 1; ; attempt++)); do
+    status=0
+    "$@" || status=$?
+    if (( status == 0 || attempt >= attempts )); then
+      return "${status}"
+    fi
+    delay="$((2 ** (attempt - 1))).$((RANDOM % 10))"
+    log_warning "Attempt ${attempt}/${attempts} failed with status ${status}; retrying in ${delay}s"
+    sleep "${delay}"
+  done
+}
+
 # ============================================================================
 # Array utilities
 # ============================================================================

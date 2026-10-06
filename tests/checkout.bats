@@ -286,8 +286,8 @@ setup() {
 
   stub ssh-keyscan "* : echo 'keyscan'"
   stub sleep \
-    "2 : true" \
-    "5 : true"
+    "* : true" \
+    "* : true"
   stub git \
     "clean * : echo 'git clean'" \
     "fetch --depth 1 origin refs/pull/123/merge : echo \"fatal: couldn't find remote ref refs/pull/123/merge\" >&2; exit 1" \
@@ -299,8 +299,8 @@ setup() {
   run "$PWD"/hooks/checkout
 
   assert_success
-  assert_output --partial 'retrying in 2s'
-  assert_output --partial 'retrying in 5s'
+  assert_output --partial 'Attempt 1/3 failed with status 1; retrying in 1.'
+  assert_output --partial 'Attempt 2/3 failed with status 1; retrying in 2.'
   assert_output --partial 'git fetch merge refspec'
   assert_output --partial 'checkout fetch_head'
 
@@ -382,7 +382,7 @@ setup() {
   run "$PWD"/hooks/checkout
 
   assert_success
-  assert_output --partial 'Fetch failed with status 128 (attempt 1/6); retrying in 1.'
+  assert_output --partial 'Attempt 1/6 failed with status 128; retrying in 1.'
   assert_output --partial 'git fetch commit'
   assert_output --partial 'checkout commit'
 
@@ -407,7 +407,7 @@ setup() {
   run "$PWD"/hooks/checkout
 
   assert_failure 128
-  assert_output --partial '(attempt 2/3); retrying in 2.'
+  assert_output --partial 'Attempt 2/3 failed with status 128; retrying in 2.'
   assert_output --partial 'Failed to fetch dummy-commit-hash from origin'
 
   unstub sleep
@@ -428,6 +428,131 @@ setup() {
   assert_failure 128
   refute_output --partial 'retrying in'
   assert_output --partial 'Failed to fetch dummy-commit-hash from origin'
+
+  unstub ssh-keyscan
+  unstub git
+}
+
+@test "Retries a failed clone" {
+  export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_FETCH_ATTEMPTS="2"
+  local hook="$PWD/hooks/checkout"
+  cd "$BATS_TEST_TMPDIR"
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub sleep "* : true"
+  stub git \
+    "clone --depth 1 --filter=blob:none --no-checkout -v git@github.com:example/repo.git . : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128" \
+    "clone --depth 1 --filter=blob:none --no-checkout -v git@github.com:example/repo.git . : echo 'git clone'" \
+    "clean * : echo 'git clean'" \
+    "fetch --depth 1 origin dummy-commit-hash : echo 'git fetch commit'" \
+    "sparse-checkout set * * : echo 'git sparse-checkout'" \
+    "checkout dummy-commit-hash : echo 'checkout commit'"
+
+  run "$hook"
+
+  assert_success
+  assert_output --partial 'Attempt 1/2 failed with status 128; retrying in 1.'
+  assert_output --partial 'Repository cloned successfully'
+
+  unstub sleep
+  unstub ssh-keyscan
+  unstub git
+}
+
+@test "Retries a failed merge ref fetch" {
+  export BUILDKITE_PULL_REQUEST_USING_MERGE_REFSPEC="true"
+  export BUILDKITE_PULL_REQUEST="123"
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub sleep "* : true"
+  stub git \
+    "clean * : echo 'git clean'" \
+    "fetch --depth 1 origin refs/pull/123/merge : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128" \
+    "fetch --depth 1 origin refs/pull/123/merge : echo 'git fetch merge refspec'" \
+    "sparse-checkout set * * : echo 'git sparse-checkout'" \
+    "checkout FETCH_HEAD : echo 'checkout fetch_head'"
+
+  run "$PWD"/hooks/checkout
+
+  assert_success
+  assert_output --partial 'Attempt 1/3 failed with status 128; retrying in 1.'
+  assert_output --partial 'checkout fetch_head'
+
+  unstub sleep
+  unstub ssh-keyscan
+  unstub git
+}
+
+@test "Fails with git's exit status after merge_ref_retry_attempts merge ref fetches" {
+  export BUILDKITE_PULL_REQUEST_USING_MERGE_REFSPEC="true"
+  export BUILDKITE_PULL_REQUEST="123"
+  export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_MERGE_REF_RETRY_ATTEMPTS="2"
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub sleep "* : true"
+  stub git \
+    "clean * : echo 'git clean'" \
+    "fetch --depth 1 origin refs/pull/123/merge : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128" \
+    "fetch --depth 1 origin refs/pull/123/merge : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128"
+
+  run "$PWD"/hooks/checkout
+
+  assert_failure 128
+  assert_output --partial 'Attempt 1/2 failed with status 128'
+  assert_output --partial 'Failed to fetch merge ref for PR #123 from origin'
+
+  unstub sleep
+  unstub ssh-keyscan
+  unstub git
+}
+
+@test "Falls back to the commit when the merge ref is still missing" {
+  export BUILDKITE_PULL_REQUEST_USING_MERGE_REFSPEC="true"
+  export BUILDKITE_PULL_REQUEST="123"
+  export BUILDKITE_COMMIT="abc123"
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub sleep \
+    "* : true" \
+    "* : true"
+  stub git \
+    "clean * : echo 'git clean'" \
+    "fetch --depth 1 origin refs/pull/123/merge : echo \"fatal: couldn't find remote ref refs/pull/123/merge\" >&2; exit 1" \
+    "fetch --depth 1 origin refs/pull/123/merge : echo \"fatal: couldn't find remote ref refs/pull/123/merge\" >&2; exit 1" \
+    "fetch --depth 1 origin refs/pull/123/merge : echo \"fatal: couldn't find remote ref refs/pull/123/merge\" >&2; exit 1" \
+    "fetch --depth 1 origin abc123 : echo 'git fetch commit'" \
+    "sparse-checkout set * * : echo 'git sparse-checkout'" \
+    "checkout abc123 : echo 'checkout commit'"
+
+  run "$PWD"/hooks/checkout
+
+  assert_success
+  assert_output --partial 'falling back to abc123'
+  assert_output --partial 'checkout commit'
+
+  unstub sleep
+  unstub ssh-keyscan
+  unstub git
+}
+
+@test "merge_ref_retry_attempts 0 skips the merge ref" {
+  export BUILDKITE_PULL_REQUEST_USING_MERGE_REFSPEC="true"
+  export BUILDKITE_PULL_REQUEST="123"
+  export BUILDKITE_COMMIT="abc123"
+  export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_MERGE_REF_RETRY_ATTEMPTS="0"
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub git \
+    "clean * : echo 'git clean'" \
+    "fetch --depth 1 origin abc123 : echo 'git fetch commit'" \
+    "sparse-checkout set * * : echo 'git sparse-checkout'" \
+    "checkout abc123 : echo 'checkout commit'"
+
+  run "$PWD"/hooks/checkout
+
+  assert_success
+  assert_output --partial 'falling back to abc123'
+  assert_output --partial 'checkout commit'
 
   unstub ssh-keyscan
   unstub git
