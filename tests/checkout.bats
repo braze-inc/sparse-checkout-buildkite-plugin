@@ -367,6 +367,72 @@ setup() {
   unstub git
 }
 
+@test "Retries a failed commit fetch before succeeding" {
+  export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_FETCH_ATTEMPTS="6"
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub sleep "* : true"
+  stub git \
+    "clean * : echo 'git clean'" \
+    "fetch --depth 1 origin dummy-commit-hash : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128" \
+    "fetch --depth 1 origin dummy-commit-hash : echo 'git fetch commit'" \
+    "sparse-checkout set * * : echo 'git sparse-checkout'" \
+    "checkout dummy-commit-hash : echo 'checkout commit'"
+
+  run "$PWD"/hooks/checkout
+
+  assert_success
+  assert_output --partial 'Fetch failed with status 128 (attempt 1/6); retrying in 1.'
+  assert_output --partial 'git fetch commit'
+  assert_output --partial 'checkout commit'
+
+  unstub sleep
+  unstub ssh-keyscan
+  unstub git
+}
+
+@test "Fails with git's exit status after fetch_attempts commit fetches" {
+  export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_FETCH_ATTEMPTS="3"
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub sleep \
+    "* : true" \
+    "* : true"
+  stub git \
+    "clean * : echo 'git clean'" \
+    "fetch --depth 1 origin dummy-commit-hash : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128" \
+    "fetch --depth 1 origin dummy-commit-hash : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128" \
+    "fetch --depth 1 origin dummy-commit-hash : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128"
+
+  run "$PWD"/hooks/checkout
+
+  assert_failure 128
+  assert_output --partial '(attempt 2/3); retrying in 2.'
+  assert_output --partial 'Failed to fetch dummy-commit-hash from origin'
+
+  unstub sleep
+  unstub ssh-keyscan
+  unstub git
+}
+
+@test "Ignores BUILDKITE_CHECKOUT_ATTEMPTS and fetches once by default" {
+  export BUILDKITE_CHECKOUT_ATTEMPTS="6"
+
+  stub ssh-keyscan "* : echo 'keyscan'"
+  stub git \
+    "clean * : echo 'git clean'" \
+    "fetch --depth 1 origin dummy-commit-hash : echo 'git@github.com: Permission denied (publickey).' >&2; exit 128"
+
+  run "$PWD"/hooks/checkout
+
+  assert_failure 128
+  refute_output --partial 'retrying in'
+  assert_output --partial 'Failed to fetch dummy-commit-hash from origin'
+
+  unstub ssh-keyscan
+  unstub git
+}
+
 @test "Clean checkout handles repository without HEAD gracefully" {
   export BUILDKITE_PLUGIN_SPARSE_CHECKOUT_CLEAN_CHECKOUT="true"
 

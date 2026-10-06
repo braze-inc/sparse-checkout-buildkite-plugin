@@ -31,6 +31,10 @@ SKIP_SSH_KEYSCAN_OPTION="$(plugin_read_config SKIP_SSH_KEYSCAN "false")"
 CLEAN_CHECKOUT_OPTION="$(plugin_read_config CLEAN_CHECKOUT "false")"
 
 MERGE_REF_RETRY_ATTEMPTS="$(plugin_read_config MERGE_REF_RETRY_ATTEMPTS "3")"
+# Opt-in retry with the agent's built-in checkout backoff (buildkite/agent#3822):
+# 1s, 2s, 4s, ... plus up to 1s of jitter between attempts
+FETCH_ATTEMPTS="$(plugin_read_config FETCH_ATTEMPTS "1")"
+(( FETCH_ATTEMPTS > 0 )) || FETCH_ATTEMPTS=1
 
 if [[ "${CLEAN_CHECKOUT_OPTION}" = "true" ]]; then
   log_warning "clean_checkout is enabled - this will destroy any local changes and reset the repository state"
@@ -206,8 +210,16 @@ if [[ "${USE_MERGE_REFSPEC}" != "true" ]]; then
   fi
 
   log_info "Fetching ${BUILDKITE_COMMIT} from origin"
-  fetch_status=0
-  git fetch "${FETCH_FLAGS[@]}" || fetch_status=$?
+  for ((attempt = 1; ; attempt++)); do
+    fetch_status=0
+    git fetch "${FETCH_FLAGS[@]}" || fetch_status=$?
+    if [[ "${fetch_status}" -eq 0 ]] || [[ "${attempt}" -ge "${FETCH_ATTEMPTS}" ]]; then
+      break
+    fi
+    delay="$((2 ** (attempt - 1))).$((RANDOM % 10))"
+    log_warning "Fetch failed with status ${fetch_status} (attempt ${attempt}/${FETCH_ATTEMPTS}); retrying in ${delay}s"
+    sleep "${delay}"
+  done
   if [[ "${fetch_status}" -ne 0 ]]; then
     log_error "Failed to fetch ${BUILDKITE_COMMIT} from origin"
     exit "${fetch_status}"
